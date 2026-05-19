@@ -1,0 +1,48 @@
+# ─── Python ───────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.pyc
+
+# ─── Virtual Environment ──────────────────────────────────────
+# Covers backend/venv/ and any future venv anywhere in project
+venv/
+.venv/
+env/
+ENV/
+
+# ─── Environment & Secrets ────────────────────────────────────
+.env
+.env.*
+!.env.example
+
+# ─── Distribution / Build ─────────────────────────────────────
+*.egg
+*.egg-info/
+dist/
+build/
+wheels/
+*.whl
+
+# ─── Database ─────────────────────────────────────────────────
+*.db
+*.sqlite3
+
+# ─── Logs ─────────────────────────────────────────────────────
+*.log
+logs/
+
+# ─── Testing & Coverage ───────────────────────────────────────
+.pytest_cache/
+htmlcov/
+.coverage
+coverage.xml
+
+# ─── OS & Editor ──────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
