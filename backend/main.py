@@ -26,21 +26,25 @@ def create_app() -> FastAPI:
     )
 
     # ── Routers ───────────────────────────────────────────────
-    # Routers will be registered here as each phase is built:
-    #
-    # from auth.router import router as auth_router
+    # Routers are registered here as each phase is completed.
+
+    from auth.router import router as auth_router
+    app.include_router(auth_router)
+    # auth router already has prefix="/auth" and tags=["Auth"] defined internally
+    # so we don't pass prefix here — avoids double prefix like /auth/auth/login
+
+    # Uncomment as each phase is completed:
     # from departments.router import router as dept_router
     # from ingestion.router import router as ingestion_router
     # from rag.router import router as rag_router
     # from audit.router import router as audit_router
     # from analytics.router import router as analytics_router
     #
-    # app.include_router(auth_router, prefix="/api/v1/auth", tags=["Auth"])
-    # app.include_router(dept_router, prefix="/api/v1/departments", tags=["Departments"])
-    # app.include_router(ingestion_router, prefix="/api/v1/documents", tags=["Ingestion"])
-    # app.include_router(rag_router, prefix="/api/v1/query", tags=["RAG"])
-    # app.include_router(audit_router, prefix="/api/v1/audit", tags=["Audit"])
-    # app.include_router(analytics_router, prefix="/api/v1/analytics", tags=["Analytics"])
+    # app.include_router(dept_router)
+    # app.include_router(ingestion_router)
+    # app.include_router(rag_router)
+    # app.include_router(audit_router)
+    # app.include_router(analytics_router)
 
     # ── Health Check ──────────────────────────────────────────
     @app.get("/health", response_model=HealthCheckResponse, tags=["Health"])
