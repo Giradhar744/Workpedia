@@ -8,11 +8,12 @@ from passlib.context import CryptContext
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 
-from auth.models import User, Session, OTPCode, OTPPurpose
+from auth.models import User, Session, OTPCode, OTPPurpose, UserRole
 from auth.schemas import (
     LoginRequest, LoginResponse, TokenResponse,
     UserResponse, RefreshTokenRequest, ResetPasswordRequest,
-    ForgotPasswordRequest
+    ForgotPasswordRequest, CreateUserBySuperAdminRequest,
+    CreateUserByDeptAdminRequest, ChangeUserRoleRequest
 )
 from core.config import settings
 from core.exceptions import (
@@ -21,7 +22,10 @@ from core.exceptions import (
     AccountSuspendedException,
     InvalidTokenException,
     TokenExpiredException,
-    InvalidOTPException
+    InvalidOTPException,
+    AlreadyExistsException, 
+    NotFoundException, 
+    ForbiddenException
 )
 
 # ─── Password Hashing ─────────────────────────────────────────────────────────
@@ -389,3 +393,236 @@ async def reset_password(
         await db.delete(session)
 
     await db.commit()
+    
+async def create_user_by_super_admin(
+    request: CreateUserBySuperAdminRequest,
+    current_user: User,
+    db: AsyncSession,
+) -> UserResponse:
+    """
+    Super Admin creates a dept_admin or employee.
+
+    Rules:
+    - Cannot create another super_admin via API
+    - Must specify department_id — user is assigned on creation
+    - Sets department_id directly on User model
+
+    Flow:
+    1. Block super_admin role creation
+    2. Verify department exists
+    3. Check email not already taken
+    4. Create user with department_id
+    """
+
+    # Step 1 — block super_admin creation via API
+    if request.role == UserRole.SUPER_ADMIN:
+        raise ForbiddenException(
+            "Cannot create Super Admin via API."
+        )
+
+    # Step 2 — verify department exists
+    from departments.models import Department
+    dept_result = await db.execute(
+        select(Department).where(Department.id == request.department_id)
+    )
+    if not dept_result.scalar_one_or_none():
+        raise NotFoundException("Department")
+
+    # Step 3 — check email not already taken
+    result = await db.execute(
+        select(User).where(User.email == request.email)
+    )
+    if result.scalar_one_or_none():
+        raise AlreadyExistsException("User")
+
+    # Step 4 — create user with department
+    user = User(
+        name=request.name,
+        email=request.email,
+        hashed_password=hash_password(request.password),
+        role=request.role,
+        department_id=request.department_id,
+        is_active=True,
+        is_suspended=False,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    return UserResponse.model_validate(user)
+
+
+async def create_user_by_dept_admin(
+    request: CreateUserByDeptAdminRequest,
+    current_user: User,
+    db: AsyncSession,
+) -> UserResponse:
+    """
+    Dept Admin creates an employee in their own department.
+
+    Rules:
+    - Role is always EMPLOYEE — no choice
+    - Department is always current_user.department_id — no choice
+    - Dept Admin must belong to a department
+
+    Flow:
+    1. Verify dept admin has a department
+    2. Check email not already taken
+    3. Create user with role=EMPLOYEE and same department as dept admin
+    """
+
+    # Step 1 — verify dept admin belongs to a department
+    if not current_user.department_id:
+        raise ForbiddenException(
+            "You are not assigned to any department."
+        )
+
+    # Step 2 — check email not already taken
+    result = await db.execute(
+        select(User).where(User.email == request.email)
+    )
+    if result.scalar_one_or_none():
+        raise AlreadyExistsException("User")
+
+    # Step 3 — create employee in dept admin's own department
+    user = User(
+        name=request.name,
+        email=request.email,
+        hashed_password=hash_password(request.password),
+        role=UserRole.EMPLOYEE,                         # always employee
+        department_id=current_user.department_id,       # always their own dept
+        is_active=True,
+        is_suspended=False,
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    return UserResponse.model_validate(user)
+
+
+async def get_all_users(
+    current_user: User,
+    db: AsyncSession,
+) -> list[UserResponse]:
+    """
+    Returns users based on role:
+    - Super Admin → sees all users in the system
+    - Dept Admin → sees only employees in their own department
+    """
+    if current_user.role == UserRole.SUPER_ADMIN:
+        # super admin sees everyone
+        result = await db.execute(
+            select(User).order_by(User.name)
+        )
+    else:
+        # dept admin sees only employees in their own department
+        if not current_user.department_id:
+            return []
+
+        result = await db.execute(
+            select(User).where(
+                User.role == UserRole.EMPLOYEE,
+                User.department_id == current_user.department_id,
+            ).order_by(User.name)
+        )
+
+    users = result.scalars().all()
+    return [UserResponse.model_validate(u) for u in users]
+
+
+async def deactivate_user(
+    user_id: UUID,
+    current_user: User,
+    db: AsyncSession,
+) -> None:
+    """
+    Deactivates a user account (soft delete).
+    Sets is_active = False instead of deleting from DB.
+
+    Rules:
+    - Super Admin can deactivate dept admins and employees
+    - Dept Admin can only deactivate employees
+    - Nobody can deactivate super admin
+    """
+    result = await db.execute(
+        select(User).where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise NotFoundException("User")
+
+    # cannot deactivate super admin
+    if user.role == UserRole.SUPER_ADMIN:
+        raise ForbiddenException("Cannot deactivate Super Admin.")
+
+    # dept admin can only deactivate employees in their OWN department
+    if current_user.role == UserRole.DEPT_ADMIN:
+        if user.role != UserRole.EMPLOYEE:
+            raise ForbiddenException(
+                "Dept Admin can only deactivate Employee accounts."
+            )
+        # scope check — cannot touch employees from other departments
+        if user.department_id != current_user.department_id:
+            raise ForbiddenException(
+                "You can only deactivate employees in your own department."
+            )
+
+    user.is_active = False
+    await db.commit()
+
+
+async def change_user_role(
+    user_id: UUID,
+    request: ChangeUserRoleRequest,
+    current_user: User,
+    db: AsyncSession,
+) -> UserResponse:
+    """
+    Super Admin changes a user's role.
+
+    Rules:
+    - Cannot change role to super_admin
+    - Cannot change super_admin's role
+    - Cannot change your own role
+
+    Flow:
+    1. Block super_admin role assignment
+    2. Fetch target user
+    3. Block changing super_admin's role
+    4. Block changing own role
+    5. Update role
+    """
+
+    # Step 1 — block super_admin role assignment
+    if request.role == UserRole.SUPER_ADMIN:
+        raise ForbiddenException(
+            "Cannot assign Super Admin role via API."
+        )
+
+    # Step 2 — fetch target user
+    result = await db.execute(
+        select(User).where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+    if not user:
+        raise NotFoundException("User")
+
+    # Step 3 — block changing super_admin's role
+    if user.role == UserRole.SUPER_ADMIN:
+        raise ForbiddenException(
+            "Cannot change Super Admin's role."
+        )
+
+    # Step 4 — block changing own role
+    if user.id == current_user.id:
+        raise ForbiddenException(
+            "Cannot change your own role."
+        )
+
+    # Step 5 — update role
+    user.role = request.role
+    await db.commit()
+    await db.refresh(user)
+
+    return UserResponse.model_validate(user)

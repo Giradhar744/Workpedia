@@ -58,7 +58,7 @@ class Settings(BaseSettings):
 
     # ─── AI — Anthropic Claude ────────────────────────────────
     ANTHROPIC_API_KEY: str
-    CLAUDE_MODEL: str = "claude-3-5-sonnet-20241022"
+    CLAUDE_MODEL: str = "claude-sonnet-4-5"
     CLAUDE_MAX_TOKENS: int = 2048
 
     # ─── AI — OpenAI Embeddings ───────────────────────────────

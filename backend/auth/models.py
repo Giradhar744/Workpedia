@@ -38,10 +38,12 @@ class User(Base):
     is_suspended = Column(Boolean, default=False)
     login_attempts = Column(Integer, default=0)
     locked_until = Column(DateTime, nullable=True)
+    department_id = Column(UUID(as_uuid=True), ForeignKey("departments.id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     # relationships
+    department = relationship("Department", foreign_keys=[department_id])
     sessions = relationship("Session", back_populates="user", cascade="all, delete-orphan")
     otp_codes = relationship("OTPCode", back_populates="user", cascade="all, delete-orphan")
 

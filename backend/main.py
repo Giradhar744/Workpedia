@@ -34,7 +34,9 @@ def create_app() -> FastAPI:
     # so we don't pass prefix here — avoids double prefix like /auth/auth/login
 
     # Uncomment as each phase is completed:
-    # from departments.router import router as dept_router
+    from departments.router import router as dept_router
+    app.include_router(dept_router)
+    
     # from ingestion.router import router as ingestion_router
     # from rag.router import router as rag_router
     # from audit.router import router as audit_router
